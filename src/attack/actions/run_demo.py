@@ -20,14 +20,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run experiment with hyperparameters.")
     parser.add_argument(
         "--model",
-        default="llama3",
+        default="gpt-4o-mini",
         choices=["mistral-7B", "mistral-24B", "gpt-4o-mini", "llama2", "llama3"],
         help="Which LLM to use for the agent.",
     )
     parser.add_argument(
         "--start_url",
         type=str,
-        default="https://sj110.pages.iu.edu/travel_ad_demo.html",
+        default="http://localhost:8000/travel_demo.html",
         help="Starting URL for the environment.",
     )
     parser.add_argument(

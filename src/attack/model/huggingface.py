@@ -30,11 +30,23 @@ def complete(messages: list, model_name: str) -> str:
     gc.collect()
     torch.cuda.empty_cache()
 
-    input = tokenizer.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt").to(DEVICE)
-    output = model.generate(input, do_sample=False, max_new_tokens=512)
+    inputs = tokenizer.apply_chat_template(
+    messages,
+    add_generation_prompt=True,
+    return_tensors="pt"
+).to(DEVICE)
 
-    generation = tokenizer.batch_decode(output[:, input.shape[1]:], skip_special_tokens=True)[0]
+    output = model.generate(
+        input_ids=inputs["input_ids"],
+        attention_mask=inputs["attention_mask"],
+        do_sample=False,
+        max_new_tokens=512
+    )
 
+    generation = tokenizer.batch_decode(
+        output[:, inputs["input_ids"].shape[1]:],
+        skip_special_tokens=True
+    )[0]
     return generation
 
 
