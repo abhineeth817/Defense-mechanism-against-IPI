@@ -14,6 +14,53 @@ from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str, prun
 
 from src.dataset.utils.data_assets import prompt_example_options, prompt_phrasing_options, init_script
 
+
+def infer_source_tag(text: str) -> str:
+    """Assign a trust/provenance label to a snippet of page text."""
+    lowered = text.lower()
+
+    # Treat these as likely untrusted or non-authoritative content.
+    if any(token in lowered for token in ("ad ", "advert", "sponsored", "promo", "cookie", "banner", "iframe", "widget")):
+        return "third_party_content"
+
+    # Navigation and layout are not task instructions by default.
+    if any(token in lowered for token in ("nav", "menu", "header", "footer", "sidebar", "breadcrumb", "search", "login", "sign in")):
+        return "site_navigation"
+
+    # Main task content is the most trusted source.
+    if any(token in lowered for token in ("main", "article", "content", "post", "product", "description", "title", "details")):
+        return "site_main_content"
+
+    # Forms and inputs often include user-entered data or instructions.
+    if any(token in lowered for token in ("form", "input", "button", "submit", "email", "password", "checkout")):
+        return "site_form_content"
+
+    if any(token in lowered for token in ("script", "style", "hidden", "noscript")):
+        return "embedded_or_non_visible_content"
+
+    return "site_content"
+
+
+def annotate_provenance(text: str | None, default_tag: str = "site_content") -> str:
+    """Add provenance tags to flattened page text so the model knows where content came from."""
+    if not text:
+        return ""
+
+    tagged_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            tagged_lines.append("")
+            continue
+
+        source_tag = infer_source_tag(stripped)
+        if source_tag == "site_content" and default_tag != "site_content":
+            source_tag = default_tag
+        tagged_lines.append(f"[SOURCE:{source_tag}] {stripped}")
+
+    return "\n".join(tagged_lines)
+
+
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 print("API Key:", api_key)  # Debugging: Ensure it's set
@@ -71,6 +118,8 @@ class DownloaderEnv(BrowserEnv):
         self.last_action_error = ""
 
 
+
+
     def obs_from_url(self, url: str) -> dict:
         """
         Parses webpage to produce observation dictionary
@@ -103,6 +152,9 @@ class DownloaderEnv(BrowserEnv):
         Returns:
             obs (dict): The observation dictionary with some preprocessing done
         """
+        axtree_txt = flatten_axtree_to_str(obs["axtree_object"])
+        pruned_html = prune_html(flatten_dom_to_str(obs["dom_object"]))
+
         return {
             "chat_messages": obs["chat_messages"],
             # "screenshot": obs["screenshot"],
@@ -112,8 +164,8 @@ class DownloaderEnv(BrowserEnv):
             "open_pages_urls": obs["open_pages_urls"],
             "open_pages_titles": obs["open_pages_titles"],
             # "active_page_index": obs["active_page_index"],
-            "axtree_txt": flatten_axtree_to_str(obs["axtree_object"]),
-            "pruned_html": prune_html(flatten_dom_to_str(obs["dom_object"])),
+            "axtree_txt": annotate_provenance(axtree_txt, default_tag="site_content"),
+            "pruned_html": annotate_provenance(pruned_html, default_tag="site_content"),
         }
 
 
