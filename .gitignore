@@ -5,6 +5,7 @@ archive/*
 *.sh
 results/*
 *.html
+!travel_demo.html
 triggers/*
 triggers_twti/*
 scripts/*

@@ -15,6 +15,24 @@ pip install transformers
 ```
 Details may vary depending on computing environment.
 
+The demo uses the OpenAI API by default with `gpt-4o-mini`; it does not load a
+local Hugging Face model unless a local model is selected explicitly. Install
+the OpenAI client and create a `.env` file in the repository root:
+```
+pip install openai python-dotenv
+OPENAI_API_KEY=<key>
+```
+Then run the demo with:
+```
+python -m src.attack.actions.run_demo --model gpt-4o-mini
+```
+The command automatically serves the bundled `travel_demo.html` page on port
+8000. Use `--start_url` when connecting to a different site; that site must
+already be running.
+Keep the API key out of source control. The Hugging Face models remain available
+for local trigger-optimization workflows and can be selected with their existing
+model names.
+
 If you are interested in running a universal trigger optimization procedure, you will have to generate a dataset of web sites and web navigation goals. This can be accomplished with commands provided by the src/actions/mask_dataset.py file. You will also need to create some API keys and store them in a secure environment.
 
 1. Run `pip install python-dotenv` and then `touch .env`

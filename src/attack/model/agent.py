@@ -10,8 +10,6 @@ import numpy as np
 import openai
 from PIL import Image
 
-from src.attack.model.huggingface import complete
-
 from browsergym.core.action.highlevel import HighLevelActionSet
 from browsergym.experiments import AbstractAgentArgs, Agent
 from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str, prune_html
@@ -19,9 +17,7 @@ from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str, prun
 
 
 load_dotenv()
-api_key = os.getenv("OPENAI_API_KEY")
-print("API Key:", api_key)  # Debugging: Ensure it's set
-openai.api_key = api_key
+LOCAL_MODEL_NAMES = {"mistral-7B", "mistral-24B", "llama2", "llama3"}
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +125,14 @@ class DemoAgent(Agent):
         if not (use_html or use_axtree):
             raise ValueError(f"Either use_html or use_axtree must be set to True.")
 
-        if self.model_name != "mistral":
-            self.openai_client = openai.OpenAI()
+        if self.model_name not in LOCAL_MODEL_NAMES:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise RuntimeError(
+                    "OPENAI_API_KEY is not set. Add it to .env or export it before "
+                    "running with an OpenAI model."
+                )
+            self.openai_client = openai.OpenAI(api_key=api_key)
 
         self.action_set = HighLevelActionSet(
             subsets=["chat", "tab", "nav", "bid", "infeas"],  # define a subset of the action space
@@ -418,6 +420,8 @@ You will now think step by step and produce your next best action. Reflect on yo
                 action = response.choices[0].message.content
 
             case "mistral-7B" | "mistral-24B" | "llama2" | "llama3":
+                from src.attack.model.huggingface import complete
+
                 sys_content = '\n'.join([s['text'] for s in system_msgs])
                 user_content = '\n'.join([u['text'] for u in user_msgs])
                 if self.trigger:
