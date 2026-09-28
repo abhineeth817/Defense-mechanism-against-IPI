@@ -10,55 +10,9 @@ from dotenv import load_dotenv
 from browsergym.core import _get_global_playwright
 from browsergym.core.env import BrowserEnv, Chat
 from browsergym.core.task import OpenEndedTask
-from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str, prune_html
+from src.provenance import preprocess_page_content
 
 from src.dataset.utils.data_assets import prompt_example_options, prompt_phrasing_options, init_script
-
-
-def infer_source_tag(text: str) -> str:
-    """Assign a trust/provenance label to a snippet of page text."""
-    lowered = text.lower()
-
-    # Treat these as likely untrusted or non-authoritative content.
-    if any(token in lowered for token in ("ad ", "advert", "sponsored", "promo", "cookie", "banner", "iframe", "widget")):
-        return "third_party_content"
-
-    # Navigation and layout are not task instructions by default.
-    if any(token in lowered for token in ("nav", "menu", "header", "footer", "sidebar", "breadcrumb", "search", "login", "sign in")):
-        return "site_navigation"
-
-    # Main task content is the most trusted source.
-    if any(token in lowered for token in ("main", "article", "content", "post", "product", "description", "title", "details")):
-        return "site_main_content"
-
-    # Forms and inputs often include user-entered data or instructions.
-    if any(token in lowered for token in ("form", "input", "button", "submit", "email", "password", "checkout")):
-        return "site_form_content"
-
-    if any(token in lowered for token in ("script", "style", "hidden", "noscript")):
-        return "embedded_or_non_visible_content"
-
-    return "site_content"
-
-
-def annotate_provenance(text: str | None, default_tag: str = "site_content") -> str:
-    """Add provenance tags to flattened page text so the model knows where content came from."""
-    if not text:
-        return ""
-
-    tagged_lines = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            tagged_lines.append("")
-            continue
-
-        source_tag = infer_source_tag(stripped)
-        if source_tag == "site_content" and default_tag != "site_content":
-            source_tag = default_tag
-        tagged_lines.append(f"[SOURCE:{source_tag}] {stripped}")
-
-    return "\n".join(tagged_lines)
 
 
 load_dotenv()
@@ -152,8 +106,16 @@ class DownloaderEnv(BrowserEnv):
         Returns:
             obs (dict): The observation dictionary with some preprocessing done
         """
-        axtree_txt = flatten_axtree_to_str(obs["axtree_object"])
-        pruned_html = prune_html(flatten_dom_to_str(obs["dom_object"]))
+        active_page_index = obs.get("active_page_index", 0)
+        page_urls = obs.get("open_pages_urls", [])
+        page_url = (
+            page_urls[active_page_index]
+            if isinstance(active_page_index, int) and 0 <= active_page_index < len(page_urls)
+            else None
+        )
+        axtree_txt, pruned_html = preprocess_page_content(
+            obs["axtree_object"], obs["dom_object"], page_url, tag_sources=True
+        )
 
         return {
             "chat_messages": obs["chat_messages"],
@@ -164,8 +126,8 @@ class DownloaderEnv(BrowserEnv):
             "open_pages_urls": obs["open_pages_urls"],
             "open_pages_titles": obs["open_pages_titles"],
             # "active_page_index": obs["active_page_index"],
-            "axtree_txt": annotate_provenance(axtree_txt, default_tag="site_content"),
-            "pruned_html": annotate_provenance(pruned_html, default_tag="site_content"),
+            "axtree_txt": axtree_txt,
+            "pruned_html": pruned_html,
         }
 
 

@@ -6,7 +6,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from src.attack.model.agent import DemoAgentArgs
+from src.attack.ui.defense_chat import DefenseChat
 from browsergym.experiments import EnvArgs, ExpArgs, get_exp_result
+import browsergym.core.env as browsergym_env
 
 
 DEFAULT_START_URL = "http://localhost:8000/travel_demo.html"
@@ -90,7 +92,12 @@ def parse_args():
         type=str,
         default="testing"
     )
-    parser.add_argument("--n_steps", type=int, default=1, help="Number of steps to run the experiment.")
+    parser.add_argument(
+        "--n_steps",
+        type=int,
+        default=20,
+        help="Maximum number of browser actions to run before stopping the experiment.",
+    )
 
     return parser.parse_args()
 
@@ -103,6 +110,10 @@ def main():
 
     args = parse_args()
     demo_server = start_local_demo_server(args.start_url)
+
+    # Replace BrowserGym's separate chat window with the version that has a
+    # non-submitting defense toggle.
+    browsergym_env.Chat = DefenseChat
 
     try:
         if args.trigger_json:
