@@ -11,13 +11,11 @@ _INHERITED_SOURCE_TAGS = {
     "user_generated_content",
     "embedded_or_non_visible_content",
 }
-_NAVIGATION_TAGS = {"nav", "navigation", "header", "footer", "sidebar", "breadcrumb", "login"}
-_MAIN_TAGS = {"main", "article", "content", "post", "product", "description", "title", "details"}
-_FORM_TAGS = {"form", "input", "button", "submit", "select", "textarea", "email", "password", "checkout"}
 _AD_MARKERS = {"ad", "ads", "advert", "advertisement", "advertising", "sponsored", "promo", "promotion"}
-_USER_CONTENT_MARKERS = {"comment", "comments", "review", "reviews", "ugc", "usergenerated", "testimonial"}
-_NAVIGATION_MARKERS = {"nav", "navigation", "menu", "header", "footer", "sidebar", "breadcrumb", "login", "search"}
-_MAIN_MARKERS = {"main", "article", "content", "post", "product", "description", "title", "details"}
+_USER_CONTENT_MARKERS = {"commentlist", "commentslist", "reviewlist", "reviewslist", "ugc", "usergenerated", "testimonial"}
+_NAVIGATION_MARKERS = {"navigation", "menu", "sidebar", "breadcrumb", "login"}
+_MAIN_MARKERS = {"main", "article", "content", "post", "product", "description", "title", "details", "results", "flight"}
+_FORM_TAGS = {"form", "input", "button", "submit", "select", "textarea", "email", "password", "checkout"}
 
 
 def _string_at(strings: list[str], index: int) -> str | None:
@@ -59,6 +57,11 @@ def _element_source_tag(
 ) -> str:
     lowered_attributes = {name: (value or "").lower() for name, value in attributes.items()}
     words = _attribute_words(attributes)
+    compact_values = {
+        re.sub(r"[^a-z0-9]", "", value.lower())
+        for name, value in attributes.items()
+        if name in {"id", "class", "role", "aria-label", "data-testid"} and value
+    }
 
     if (
         "hidden" in attributes
@@ -70,7 +73,7 @@ def _element_source_tag(
         return inherited_tag
     if words & _AD_MARKERS:
         return "third_party_content"
-    if words & _USER_CONTENT_MARKERS:
+    if words & _USER_CONTENT_MARKERS or compact_values & _USER_CONTENT_MARKERS:
         return "user_generated_content"
     if tag_name in {"script", "style", "noscript"}:
         return "embedded_or_non_visible_content"
@@ -158,37 +161,37 @@ def tag_dom_snapshot(dom_snapshot: dict, page_url: str | None = None) -> tuple[d
 
 
 def tag_axtree_snapshot(axtree_object: dict, bid_source_tags: dict[str, str]) -> dict:
-    """Copy an accessibility tree and attach DOM-derived tags to matching nodes."""
+    """Copy an accessibility tree and propagate DOM-derived tags through its nodes."""
     tagged_axtree = deepcopy(axtree_object)
-    for node in tagged_axtree["nodes"]:
-        source_tag = bid_source_tags.get(str(node.get("browsergym_id", "")))
-        if source_tag is None:
-            continue
+    nodes = tagged_axtree["nodes"]
+    node_indexes = {node["nodeId"]: index for index, node in enumerate(nodes)}
+    visited = set()
+
+    def visit(node_index: int, inherited_tag: str) -> None:
+        if node_index in visited:
+            return
+        visited.add(node_index)
+        node = nodes[node_index]
+        source_tag = bid_source_tags.get(str(node.get("browsergym_id", "")), inherited_tag)
         properties = node.setdefault("properties", [])
         properties[:] = [prop for prop in properties if prop.get("name") != "browsergym_source"]
         properties.append(
             {"name": "browsergym_source", "value": {"value": f"[SOURCE:{source_tag}]"}}
         )
+        for child_id in node.get("childIds", []):
+            child_index = node_indexes.get(child_id)
+            if child_index is not None:
+                visit(child_index, source_tag)
+
+    if nodes:
+        visit(0, "site_content")
+    for node_index in range(len(nodes)):
+        visit(node_index, "site_content")
     return tagged_axtree
 
 
-def _text_source_tag(line: str, default_tag: str) -> str:
-    words = set(re.findall(r"[a-z0-9]+", line.lower()))
-    if words & (_AD_MARKERS | {"cookie", "banner", "iframe", "widget"}):
-        return "third_party_content"
-    if words & _NAVIGATION_TAGS:
-        return "site_navigation"
-    if words & _MAIN_TAGS:
-        return "site_main_content"
-    if words & _FORM_TAGS:
-        return "site_form_content"
-    if words & {"script", "style", "hidden", "noscript"}:
-        return "embedded_or_non_visible_content"
-    return default_tag
-
-
 def annotate_provenance_text(text: str | None, default_tag: str = "site_content") -> str:
-    """Add best-effort source labels to flattened accessibility-tree text."""
+    """Move DOM-derived AX source properties to a single leading source label."""
     if not text:
         return ""
     tagged_lines = []
@@ -196,10 +199,16 @@ def annotate_provenance_text(text: str | None, default_tag: str = "site_content"
         stripped = line.strip()
         if not stripped:
             tagged_lines.append("")
-        elif _SOURCE_MARKER.search(stripped):
-            tagged_lines.append(stripped)
         else:
-            tagged_lines.append(f"[SOURCE:{_text_source_tag(stripped, default_tag)}] {stripped}")
+            source_match = re.search(r"browsergym_source=['\"]\[SOURCE:([a-z_]+)\]['\"]", stripped)
+            if source_match:
+                source_tag = source_match.group(1)
+                content = re.sub(r",?\s*browsergym_source=['\"]\[SOURCE:[a-z_]+\]['\"]", "", stripped)
+                tagged_lines.append(f"[SOURCE:{source_tag}] {content}")
+            elif _SOURCE_MARKER.search(stripped):
+                tagged_lines.append(stripped)
+            else:
+                tagged_lines.append(f"[SOURCE:{default_tag}] {stripped}")
     return "\n".join(tagged_lines)
 
 
