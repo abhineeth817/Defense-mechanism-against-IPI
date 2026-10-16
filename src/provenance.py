@@ -65,6 +65,7 @@ def _element_source_tag(
 
     if (
         "hidden" in attributes
+        or re.search(r"(?:^|\s)dom-hidden(?:\s|$)", lowered_attributes.get("class", ""))
         or lowered_attributes.get("aria-hidden") == "true"
         or re.search(r"(?:display\s*:\s*none|visibility\s*:\s*hidden)", lowered_attributes.get("style", ""))
     ):

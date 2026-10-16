@@ -433,13 +433,20 @@ Do not produce a noop until the user's requested task is complete. You can use t
 
         match self.model_name:
             case "gpt-4o-mini":
-                response = self.openai_client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
-                        {"role": "system", "content": system_msgs},
-                        {"role": "user", "content": user_msgs},
-                    ],
-                )
+                try:
+                    response = self.openai_client.chat.completions.create(
+                        model=self.model_name,
+                        messages=[
+                            {"role": "system", "content": system_msgs},
+                            {"role": "user", "content": user_msgs},
+                        ],
+                    )
+                except openai.APIError as error:
+                    message = (
+                        f"OpenAI request failed ({type(error).__name__}): {error}\n"
+                        "Check your API access or quota, then enter another task to retry."
+                    )
+                    return f"send_msg_to_user({json.dumps(message)})", {}
                 action = response.choices[0].message.content
 
             case "mistral-7B" | "mistral-24B" | "llama2" | "llama3":
@@ -463,6 +470,14 @@ Do not produce a noop until the user's requested task is complete. You can use t
                 raise ValueError(f"Unknown model name {self.model_name}")
 
         self.action_history.append(action)
+
+        if self.chat_mode and (
+            "noop()" in action or ("I'm done" in action and "noop()" not in action)
+        ):
+            return (
+                'send_msg_to_user("Task complete. Enter another task to continue.")',
+                {},
+            )
 
         if "I'm done" in action and "noop()" not in action:
             return None, {}

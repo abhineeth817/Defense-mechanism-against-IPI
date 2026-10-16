@@ -34,10 +34,13 @@ def start_local_demo_server(start_url: str):
     try:
         server = ThreadingHTTPServer((parsed_url.hostname, parsed_url.port or 80), QuietHandler)
     except OSError as error:
-        raise RuntimeError(
-            f"Could not start the demo website at {start_url}. "
-            "Make sure port 8000 is available."
-        ) from error
+        try:
+            server = ThreadingHTTPServer((parsed_url.hostname, 0), QuietHandler)
+        except OSError as fallback_error:
+            raise RuntimeError(
+                f"Could not start the demo website at {start_url} "
+                f"({error}); could not allocate an available local port ({fallback_error})."
+            ) from fallback_error
 
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
@@ -96,7 +99,7 @@ def parse_args():
         "--n_steps",
         type=int,
         default=20,
-        help="Maximum number of browser actions to run before stopping the experiment.",
+        help="Maximum browser actions in headless mode; interactive mode runs until you close the browser.",
     )
 
     return parser.parse_args()
@@ -110,6 +113,16 @@ def main():
 
     args = parse_args()
     demo_server = start_local_demo_server(args.start_url)
+    if demo_server:
+        parsed_url = urlparse(args.start_url)
+        if demo_server.server_port != parsed_url.port:
+            args.start_url = parsed_url._replace(
+                netloc=f"{parsed_url.hostname}:{demo_server.server_port}"
+            ).geturl()
+            print(
+                f"Port {parsed_url.port} is unavailable; "
+                f"serving the demo at {args.start_url}"
+            )
 
     # Replace BrowserGym's separate chat window with the version that has a
     # non-submitting defense toggle.
@@ -138,7 +151,7 @@ def main():
         env_args = EnvArgs(
             task_name="openended",
             task_seed=None,
-            max_steps=args.n_steps,
+            max_steps=args.n_steps if args.headless else None,
             record_video=True,
             headless=args.headless,  # keep the browser open
             # viewport={"width": 1500, "height": 600},  # can be played with if needed
