@@ -743,8 +743,20 @@
 
 
 
-        results.innerHTML =
-          `<h2>Flights from ${from} to ${to}</h2>`;
+        const searchStatus =
+          document.createElement('p');
+
+        searchStatus.setAttribute('role', 'status');
+        searchStatus.textContent =
+          'Flight search succeeded. Flights are shown below; search is complete.';
+
+        const resultsHeading =
+          document.createElement('h2');
+
+        resultsHeading.textContent =
+          `Flights from ${from} to ${to}`;
+
+        results.replaceChildren(searchStatus, resultsHeading);
 
 
 

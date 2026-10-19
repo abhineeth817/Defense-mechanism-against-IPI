@@ -199,17 +199,25 @@ def annotate_provenance_text(text: str | None, default_tag: str = "site_content"
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
-            tagged_lines.append("")
+            tagged_lines.append(line)
         else:
-            source_match = re.search(r"browsergym_source=['\"]\[SOURCE:([a-z_]+)\]['\"]", stripped)
+            indentation = line[: len(line) - len(line.lstrip())]
+            content = line[len(indentation) :]
+            source_match = re.search(
+                r"browsergym_source=['\"]\[SOURCE:([a-z_]+)\]['\"]", content
+            )
             if source_match:
                 source_tag = source_match.group(1)
-                content = re.sub(r",?\s*browsergym_source=['\"]\[SOURCE:[a-z_]+\]['\"]", "", stripped)
-                tagged_lines.append(f"[SOURCE:{source_tag}] {content}")
-            elif _SOURCE_MARKER.search(stripped):
-                tagged_lines.append(stripped)
+                content = re.sub(
+                    r",?\s*browsergym_source=['\"]\[SOURCE:[a-z_]+\]['\"]",
+                    "",
+                    content,
+                )
+                tagged_lines.append(f"{indentation}[SOURCE:{source_tag}] {content}")
+            elif _SOURCE_MARKER.search(content):
+                tagged_lines.append(line)
             else:
-                tagged_lines.append(f"[SOURCE:{default_tag}] {stripped}")
+                tagged_lines.append(f"{indentation}[SOURCE:{default_tag}] {content}")
     return "\n".join(tagged_lines)
 
 
