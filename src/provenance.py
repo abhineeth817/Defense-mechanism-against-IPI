@@ -5,7 +5,24 @@ from urllib.parse import urlsplit
 from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str, prune_html
 
 
-_SOURCE_MARKER = re.compile(r"^\s*\[SOURCE:[a-z_]+\]")
+_SOURCE_TAG_IDS = {
+    "site_content": 0,
+    "site_main_content": 1,
+    "site_navigation": 2,
+    "site_form_content": 3,
+    "third_party_content": 4,
+    "user_generated_content": 5,
+    "embedded_or_non_visible_content": 6,
+}
+SOURCE_TAG_LEGEND = ", ".join(
+    f"{tag_id}={tag}" for tag, tag_id in _SOURCE_TAG_IDS.items()
+)
+_SOURCE_MARKER = re.compile(r"^\s*(?:\[SOURCE:[a-z_]+\]|\[S:\d+\])")
+
+
+def _compact_source_marker(tag: str) -> str:
+    tag_id = _SOURCE_TAG_IDS.get(tag)
+    return f"[S:{tag_id}]" if tag_id is not None else f"[SOURCE:{tag}]"
 _INHERITED_SOURCE_TAGS = {
     "third_party_content",
     "user_generated_content",
@@ -131,7 +148,7 @@ def tag_dom_snapshot(dom_snapshot: dict, page_url: str | None = None) -> tuple[d
                 value_index = nodes["nodeValue"][node_index]
                 value = _string_at(strings, value_index)
                 if value and value.strip() and not _SOURCE_MARKER.match(value):
-                    strings.append(f"[SOURCE:{parent_tag}] {value}")
+                    strings.append(f"{_compact_source_marker(parent_tag)} {value}")
                     nodes["nodeValue"][node_index] = len(strings) - 1
                 return
 
@@ -213,11 +230,26 @@ def annotate_provenance_text(text: str | None, default_tag: str = "site_content"
                     "",
                     content,
                 )
-                tagged_lines.append(f"{indentation}[SOURCE:{source_tag}] {content}")
-            elif _SOURCE_MARKER.search(content):
-                tagged_lines.append(line)
+                tagged_lines.append(
+                    f"{indentation}{_compact_source_marker(source_tag)} {content}"
+                )
             else:
-                tagged_lines.append(f"{indentation}[SOURCE:{default_tag}] {content}")
+                marker_match = _SOURCE_MARKER.match(content)
+                if marker_match:
+                    existing_marker = marker_match.group(0).strip()
+                    source_tag_match = re.fullmatch(
+                        r"\[SOURCE:([a-z_]+)\]", existing_marker
+                    )
+                    if source_tag_match:
+                        existing_marker = _compact_source_marker(
+                            source_tag_match.group(1)
+                        )
+                    content = content[marker_match.end() :].lstrip()
+                    tagged_lines.append(f"{indentation}{existing_marker} {content}")
+                else:
+                    tagged_lines.append(
+                        f"{indentation}{_compact_source_marker(default_tag)} {content}"
+                    )
     return "\n".join(tagged_lines)
 
 
