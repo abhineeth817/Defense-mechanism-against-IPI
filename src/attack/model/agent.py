@@ -178,6 +178,9 @@ class DemoAgent(Agent):
 Review the current state of the page and all other information to find the best
 possible next action to accomplish your goal. Your answer will be interpreted
 and executed by a program, make sure to follow the formatting instructions.
+Always make sure to explain to yourself the reasoning behind your next action.
+and if you find yourself performing the same action action back to back in the action history, double check the webpage 
+and check if the desired result is already present on the page.
 """,
 #                     "text": f"""\
 # # Instructions
