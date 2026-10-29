@@ -61,10 +61,15 @@ def str2bool(v):
 def parse_args():
     parser = argparse.ArgumentParser(description="Run experiment with hyperparameters.")
     parser.add_argument(
+        "--provider",
+        default="openai",
+        choices=["openai", "groq"],
+        help="Hosted API provider. Defaults to OpenAI; use 'groq' with GROQ_API_KEY.",
+    )
+    parser.add_argument(
         "--model",
         default="gpt-4o-mini",
-        choices=["mistral-7B", "mistral-24B", "gpt-4o-mini", "llama2", "llama3"],
-        help="Which LLM to use. The default sends requests to OpenAI using OPENAI_API_KEY.",
+        help="Model name or ID. For Groq, provide a Groq model ID and set --provider groq.",
     )
     parser.add_argument(
         "--start_url",
@@ -140,6 +145,7 @@ def main():
         # setting up agent config
         agent_args = DemoAgentArgs(
             model_name=args.model,
+            provider=args.provider,
             chat_mode=False,
             demo_mode="default",
             use_html=False,

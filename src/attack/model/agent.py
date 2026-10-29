@@ -88,7 +88,7 @@ def image_to_jpg_base64_url(image: np.ndarray | Image.Image):
 
 
 class DemoAgent(Agent):
-    """A basic agent using OpenAI API, to demonstrate BrowserGym's functionalities."""
+    """A basic agent using a hosted or local model with BrowserGym."""
 
     def obs_preprocessor(self, obs: dict) -> dict:
         self.use_source_tags = defense_state_from_messages(
@@ -127,9 +127,13 @@ class DemoAgent(Agent):
         trigger: str = None,
         save_obs_and_kill_file: str = None,
         use_source_tags: bool = True,
+        provider: str = "openai",
     ) -> None:
         super().__init__()
         self.model_name = model_name
+        if provider not in {"openai", "groq"}:
+            raise ValueError(f"Unknown model provider {provider!r}; use 'openai' or 'groq'.")
+        self.provider = provider
         self.chat_mode = chat_mode
         self.use_html = use_html
         self.use_axtree = use_axtree
@@ -141,14 +145,22 @@ class DemoAgent(Agent):
         if not (use_html or use_axtree):
             raise ValueError(f"Either use_html or use_axtree must be set to True.")
 
-        if self.model_name not in LOCAL_MODEL_NAMES:
-            api_key = os.getenv("OPENAI_API_KEY")
+        if self.model_name not in LOCAL_MODEL_NAMES or self.provider == "groq":
+            provider_name = "Groq" if self.provider == "groq" else "OpenAI"
+            api_key_name = "GROQ_API_KEY" if self.provider == "groq" else "OPENAI_API_KEY"
+            api_key = os.getenv(api_key_name)
             if not api_key:
                 raise RuntimeError(
-                    "OPENAI_API_KEY is not set. Add it to .env or export it before "
-                    "running with an OpenAI model."
+                    f"{api_key_name} is not set. Add it to .env or export it before "
+                    f"using the {provider_name} API."
                 )
-            self.openai_client = openai.OpenAI(api_key=api_key)
+            if self.provider == "groq":
+                self.api_client = openai.OpenAI(
+                    api_key=api_key,
+                    base_url="https://api.groq.com/openai/v1",
+                )
+            else:
+                self.api_client = openai.OpenAI(api_key=api_key)
 
         self.action_set = HighLevelActionSet(
             subsets=["chat", "tab", "nav", "bid", "infeas"],  # define a subset of the action space
@@ -434,43 +446,39 @@ Do not produce a noop until the user's requested task is complete. You can use t
         
         # Send prompt to model based on model name
 
-        match self.model_name:
-            case "gpt-4o-mini":
-                try:
-                    response = self.openai_client.chat.completions.create(
-                        model=self.model_name,
-                        messages=[
-                            {"role": "system", "content": system_msgs},
-                            {"role": "user", "content": user_msgs},
-                        ],
-                    )
-                except openai.APIError as error:
-                    message = (
-                        f"OpenAI request failed ({type(error).__name__}): {error}\n"
-                        "Check your API access or quota, then enter another task to retry."
-                    )
-                    return f"send_msg_to_user({json.dumps(message)})", {}
-                action = response.choices[0].message.content
+        if self.model_name in LOCAL_MODEL_NAMES and self.provider == "openai":
+            from src.attack.model.huggingface import complete
 
-            case "mistral-7B" | "mistral-24B" | "llama2" | "llama3":
-                from src.attack.model.huggingface import complete
+            sys_content = '\n'.join([s['text'] for s in system_msgs])
+            user_content = '\n'.join([u['text'] for u in user_msgs])
+            if self.trigger:
+                user_content = user_content.replace("{optim_str}", self.trigger)
 
-                sys_content = '\n'.join([s['text'] for s in system_msgs])
-                user_content = '\n'.join([u['text'] for u in user_msgs])
-                if self.trigger:
-                    user_content = user_content.replace("{optim_str}", self.trigger)
-                
-                response = complete(
+            action = complete(
+                messages=[
+                    {"role": "system", "content": sys_content},
+                    {"role": "user", "content": user_content},
+                ],
+                model_name=self.model_name,
+            )
+        else:
+            try:
+                response = self.api_client.chat.completions.create(
+                    model=self.model_name,
                     messages=[
-                        {"role": "system", "content": sys_content},
-                        {"role": "user", "content": user_content},
+                        {"role": "system", "content": system_msgs},
+                        {"role": "user", "content": user_msgs},
                     ],
-                    model_name=self.model_name,
                 )
-                action = response
-
-            case _:
-                raise ValueError(f"Unknown model name {self.model_name}")
+            except openai.APIError as error:
+                provider_name = "Groq" if self.provider == "groq" else "OpenAI"
+                message = (
+                    f"{provider_name} request failed "
+                    f"({type(error).__name__}): {error}\n"
+                    "Check your API access or quota, then enter another task to retry."
+                )
+                return f"send_msg_to_user({json.dumps(message)})", {}
+            action = response.choices[0].message.content
 
         self.action_history.append(action)
 
@@ -506,10 +514,12 @@ class DemoAgentArgs(AbstractAgentArgs):
     trigger: str = None
     save_obs_and_kill_file: str = None
     use_source_tags: bool = True
+    provider: str = "openai"
 
     def make_agent(self):
         return DemoAgent(
             model_name=self.model_name,
+            provider=self.provider,
             chat_mode=self.chat_mode,
             demo_mode=self.demo_mode,
             use_html=self.use_html,

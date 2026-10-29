@@ -26,6 +26,14 @@ Then run the demo with:
 ```
 python -m src.attack.actions.run_demo --model gpt-4o-mini
 ```
+To use Groq, add `GROQ_API_KEY=<key>` to the same `.env` file and select the
+provider and model ID:
+```
+python -m src.attack.actions.run_demo --provider groq --model llama-3.3-70b-versatile
+```
+When `--provider groq` is selected, requests use Groq's OpenAI-compatible API;
+otherwise hosted model requests continue to use OpenAI. Existing local
+Hugging Face model names remain available with the default provider.
 The command automatically serves the bundled `travel_demo.html` page on port
 8000, falling back to an available local port if 8000 is already in use. Use
 `--start_url` when connecting to a different site; that site must already be
