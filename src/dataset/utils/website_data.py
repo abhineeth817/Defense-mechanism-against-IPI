@@ -10,9 +10,10 @@ from dotenv import load_dotenv
 from browsergym.core import _get_global_playwright
 from browsergym.core.env import BrowserEnv, Chat
 from browsergym.core.task import OpenEndedTask
-from browsergym.utils.obs import flatten_axtree_to_str, flatten_dom_to_str, prune_html
+from src.provenance import preprocess_page_content
 
 from src.dataset.utils.data_assets import prompt_example_options, prompt_phrasing_options, init_script
+
 
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
@@ -71,6 +72,8 @@ class DownloaderEnv(BrowserEnv):
         self.last_action_error = ""
 
 
+
+
     def obs_from_url(self, url: str) -> dict:
         """
         Parses webpage to produce observation dictionary
@@ -103,6 +106,17 @@ class DownloaderEnv(BrowserEnv):
         Returns:
             obs (dict): The observation dictionary with some preprocessing done
         """
+        active_page_index = obs.get("active_page_index", 0)
+        page_urls = obs.get("open_pages_urls", [])
+        page_url = (
+            page_urls[active_page_index]
+            if isinstance(active_page_index, int) and 0 <= active_page_index < len(page_urls)
+            else None
+        )
+        axtree_txt, pruned_html = preprocess_page_content(
+            obs["axtree_object"], obs["dom_object"], page_url, tag_sources=True
+        )
+
         return {
             "chat_messages": obs["chat_messages"],
             # "screenshot": obs["screenshot"],
@@ -112,8 +126,8 @@ class DownloaderEnv(BrowserEnv):
             "open_pages_urls": obs["open_pages_urls"],
             "open_pages_titles": obs["open_pages_titles"],
             # "active_page_index": obs["active_page_index"],
-            "axtree_txt": flatten_axtree_to_str(obs["axtree_object"]),
-            "pruned_html": prune_html(flatten_dom_to_str(obs["dom_object"])),
+            "axtree_txt": axtree_txt,
+            "pruned_html": pruned_html,
         }
 
 

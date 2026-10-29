@@ -1,8 +1,50 @@
 import argparse
 import json
 import pathlib
+import threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
+
 from src.attack.model.agent import DemoAgentArgs
+from src.attack.ui.defense_chat import DefenseChat
 from browsergym.experiments import EnvArgs, ExpArgs, get_exp_result
+import browsergym.core.env as browsergym_env
+
+
+DEFAULT_START_URL = "http://localhost:8000/travel_demo.html"
+
+
+def start_local_demo_server(start_url: str):
+    """Serve the bundled demo page when the default local URL is used."""
+    parsed_url = urlparse(start_url)
+    if start_url != DEFAULT_START_URL or parsed_url.hostname not in {"localhost", "127.0.0.1"}:
+        return None
+
+    class QuietHandler(SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(
+                *args,
+                directory=str(pathlib.Path(__file__).resolve().parents[3]),
+                **kwargs,
+            )
+
+        def log_message(self, format, *args):
+            pass
+
+    try:
+        server = ThreadingHTTPServer((parsed_url.hostname, parsed_url.port or 80), QuietHandler)
+    except OSError as error:
+        try:
+            server = ThreadingHTTPServer((parsed_url.hostname, 0), QuietHandler)
+        except OSError as fallback_error:
+            raise RuntimeError(
+                f"Could not start the demo website at {start_url} "
+                f"({error}); could not allocate an available local port ({fallback_error})."
+            ) from fallback_error
+
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    return server
 
 
 def str2bool(v):
@@ -19,15 +61,20 @@ def str2bool(v):
 def parse_args():
     parser = argparse.ArgumentParser(description="Run experiment with hyperparameters.")
     parser.add_argument(
+        "--provider",
+        default="openai",
+        choices=["openai", "groq"],
+        help="Hosted API provider. Defaults to OpenAI; use 'groq' with GROQ_API_KEY.",
+    )
+    parser.add_argument(
         "--model",
         default="gpt-4o-mini",
-        choices=["mistral-7B", "mistral-24B", "gpt-4o-mini", "llama2", "llama3"],
-        help="Which LLM to use for the agent.",
+        help="Model name or ID. For Groq, provide a Groq model ID and set --provider groq.",
     )
     parser.add_argument(
         "--start_url",
         type=str,
-        default="http://localhost:8000/travel_demo.html",
+        default=DEFAULT_START_URL,
         help="Starting URL for the environment.",
     )
     parser.add_argument(
@@ -53,7 +100,12 @@ def parse_args():
         type=str,
         default="testing"
     )
-    parser.add_argument("--n_steps", type=int, default=1, help="Number of steps to run the experiment.")
+    parser.add_argument(
+        "--n_steps",
+        type=int,
+        default=20,
+        help="Maximum browser actions in headless mode; interactive mode runs until you close the browser.",
+    )
 
     return parser.parse_args()
 
@@ -65,59 +117,80 @@ def main():
     """
 
     args = parse_args()
+    demo_server = start_local_demo_server(args.start_url)
+    if demo_server:
+        parsed_url = urlparse(args.start_url)
+        if demo_server.server_port != parsed_url.port:
+            args.start_url = parsed_url._replace(
+                netloc=f"{parsed_url.hostname}:{demo_server.server_port}"
+            ).geturl()
+            print(
+                f"Port {parsed_url.port} is unavailable; "
+                f"serving the demo at {args.start_url}"
+            )
 
-    if args.trigger_json:
-        trigger_json_path = pathlib.Path(args.trigger_json)
-        with open(trigger_json_path) as f:
-            trigger_dict = json.load(f)
-            trigger = trigger_dict["trigger"]
-    else:
-        trigger = None
-    
-    # setting up agent config
-    agent_args = DemoAgentArgs(
-        model_name=args.model,
-        chat_mode=False,
-        demo_mode="default",
-        use_html=False,
-        use_axtree=True,
-        use_screenshot=False,
-        trigger=trigger,
-    )
-    # setting up environment config
-    env_args = EnvArgs(
-        task_name="openended",
-        task_seed=None,
-        max_steps=args.n_steps,
-        record_video=True,
-        headless=args.headless,  # keep the browser open
-        # viewport={"width": 1500, "height": 600},  # can be played with if needed
-    )
+    # Replace BrowserGym's separate chat window with the version that has a
+    # non-submitting defense toggle.
+    browsergym_env.Chat = DefenseChat
 
-    if not args.headless:
-        agent_args.chat_mode = True
-        env_args.wait_for_user_message = True
-        env_args.task_kwargs = {"start_url": args.start_url}
-    else:
-        env_args.task_kwargs = {"start_url": args.start_url, "goal": args.goal}
+    try:
+        if args.trigger_json:
+            trigger_json_path = pathlib.Path(args.trigger_json)
+            with open(trigger_json_path) as f:
+                trigger_dict = json.load(f)
+                trigger = trigger_dict["trigger"]
+        else:
+            trigger = None
 
-    # setting up the experiment
-    exp_args = ExpArgs(
-        env_args=env_args,
-        agent_args=agent_args,
-        exp_name=args.exp_name,
-    )
+        # setting up agent config
+        agent_args = DemoAgentArgs(
+            model_name=args.model,
+            provider=args.provider,
+            chat_mode=False,
+            demo_mode="default",
+            use_html=False,
+            use_axtree=True,
+            use_screenshot=False,
+            trigger=trigger,
+        )
+        # setting up environment config
+        env_args = EnvArgs(
+            task_name="openended",
+            task_seed=None,
+            max_steps=args.n_steps if args.headless else None,
+            record_video=True,
+            headless=args.headless,  # keep the browser open
+            # viewport={"width": 1500, "height": 600},  # can be played with if needed
+        )
 
-    # running and logging results
-    exp_args.prepare("./results")
-    exp_args.run()
+        if not args.headless:
+            agent_args.chat_mode = True
+            env_args.wait_for_user_message = True
+            env_args.task_kwargs = {"start_url": args.start_url}
+        else:
+            env_args.task_kwargs = {"start_url": args.start_url, "goal": args.goal}
 
-    # loading and printing results
-    exp_result = get_exp_result(exp_args.exp_dir)
-    exp_record = exp_result.get_exp_record()
+        # setting up the experiment
+        exp_args = ExpArgs(
+            env_args=env_args,
+            agent_args=agent_args,
+            exp_name=args.exp_name,
+        )
 
-    for key, val in exp_record.items():
-        print(f"{key}: {val}")
+        # running and logging results
+        exp_args.prepare("./results")
+        exp_args.run()
+
+        # loading and printing results
+        exp_result = get_exp_result(exp_args.exp_dir)
+        exp_record = exp_result.get_exp_record()
+
+        for key, val in exp_record.items():
+            print(f"{key}: {val}")
+    finally:
+        if demo_server:
+            demo_server.shutdown()
+            demo_server.server_close()
 
 
 if __name__ == "__main__":
